@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: autopatent_user
+      POSTGRES_PASSWORD: autopatent_password
+      POSTGRES_DB: autopatent
+    restart: unless-stopped
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data:rw
+
+  rospatent-scraper:
+    build:
+      context: .
+      dockerfile: src/rospatent_scraper/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - config/postgres.env
+      - config/redis.env
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./src/rospatent_scraper/:/opt/app-root/src/rospatent_scraper:rw
+      - ./src/common/:/opt/app-root/src/common:rw
+      - ./src/redis/:/opt/app-root/src/redis:rw
+
+  giga-chat:
+    build:
+      context: .
+      dockerfile: src/giga_chat/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    env_file:
+      - config/postgres.env
+      - config/giga_chat_api.env
+    ports:
+      - "8092:8082"
+    volumes:
+      - ./src/giga_chat/:/opt/app-root/src/giga_chat:rw
+      - ./src/common/:/opt/app-root/src/common:rw
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: src/telegram_bot/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - rospatent-scraper
+      - giga-chat
+    env_file:
+      - config/postgres.env
+      - config/telegram_bot.env
+    environment:
+      - RASPATENT_SCRAPER_URL=http://rospatent-scraper:8081
+      - GIGA_CHAT_API_URL=http://giga-chat:8082
+    ports:
+      - "8093:8093"
+    volumes:
+      - ./src/telegram_bot/:/opt/app-root/src/telegram_bot:rw
+      - ./src/common/:/opt/app-root/src/common:rw
+
+  chromadb:
+    image: chromadb/chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/chroma-data:/chroma/chroma
+
+  embeddings:
+    build:
+      context: .
+      dockerfile: src/embeddings/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - config/postgres.env
+    depends_on:
+      - chromadb
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./src/embeddings/:/opt/app-root/src/embeddings:rw
+      - ./src/common/:/opt/app-root/src/common:rw
+
+  redis:
+    image: redis:latest
+    command: redis-server --requirepass redis_password
+    ports:
+      - "6379:6379"
+
+volumes:
+  chroma-data:
+    driver: local

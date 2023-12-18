@@ -1,0 +1,7 @@
+fastapi
+pydantic-settings
+gunicorn
+uvicorn
+aiohttp
+python-telegram-bot
+asyncpg

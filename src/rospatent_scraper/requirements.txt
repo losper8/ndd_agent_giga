@@ -1,0 +1,8 @@
+fastapi
+pydantic-settings
+gunicorn
+uvicorn
+aiohttp
+asyncpg
+openpyxl
+aioredis==1.3.1
