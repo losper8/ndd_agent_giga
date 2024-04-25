@@ -8,7 +8,7 @@ class RedisConfig(BaseSettings):
 
     URL: RedisDsn = Field(...)
     EXPIRE: int = Field(60)
-    ENABLED: bool = Field(True)
+    ENABLED: bool = Field(False)
 
 
 redis_config = RedisConfig()

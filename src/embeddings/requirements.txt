@@ -11,8 +11,4 @@ langchain-text-splitters
 tiktoken
 clean-text
 unidecode
-pandas
-numpy
-scikit-learn
-matplotlib
-plotly
+gigachat

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 
-from embeddings.api.openai import openai_router
+from embeddings.api.gigachat import gigachat_router
 
 
 def configure_cors(app: FastAPI):
@@ -28,4 +28,4 @@ async def redirect_from_root() -> RedirectResponse:
     return RedirectResponse(url='/docs')
 
 
-app.include_router(openai_router, prefix="/api/v1")
+app.include_router(gigachat_router, prefix="/api/v1")

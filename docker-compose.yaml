@@ -83,6 +83,7 @@ services:
     restart: unless-stopped
     env_file:
       - config/postgres.env
+      - config/giga_chat_api.env
     depends_on:
       - chromadb
     ports:

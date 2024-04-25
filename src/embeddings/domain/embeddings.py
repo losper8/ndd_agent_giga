@@ -1,40 +1,41 @@
 from typing import List
 
 import chromadb
-from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+from chromadb import Documents, EmbeddingFunction, Embeddings
 from cleantext import clean
+from langchain_community.embeddings.gigachat import GigaChatEmbeddings
 from langchain_text_splitters import TokenTextSplitter
 from tqdm import tqdm
 
 from embeddings.api.schema import EmbeddingRequest
 from embeddings.infrastructure.chroma_db_config import chroma_db_config
-from embeddings.infrastructure.external_api_config import external_api_config
+from embeddings.infrastructure.config import giga_chat_api_config
+
+
+class GigaChatEmbeddingFunction(EmbeddingFunction[Documents]):
+    def __init__(self, credentials: str, scope: str):
+        self.embeddings = GigaChatEmbeddings(credentials=credentials, verify_ssl_certs=False, scope=scope)
+
+    def __call__(self, input: Documents) -> Embeddings:
+        return self.embeddings.embed_documents(texts=input)
+
 
 text_splitter = TokenTextSplitter.from_tiktoken_encoder(
-    encoding_name=external_api_config.OPENAI_MODEL_ENCODER_NAME,
-    model_name=external_api_config.OPENAI_MODEL_NAME,
-    chunk_size=external_api_config.OPENAI_MODEL_MAX_INPUT,
+    encoding_name='cl100k_base',
+    model_name="text-embedding-3-large",
+    chunk_size=4096,
     chunk_overlap=0
 )
 chroma_client = chromadb.HttpClient(host=chroma_db_config.HOST, port=chroma_db_config.PORT)
-openai_embedding_function = OpenAIEmbeddingFunction(api_key=external_api_config.OPENAI_TOKEN, model_name=external_api_config.OPENAI_MODEL_NAME)
-openai_collection_raw_big = chroma_client.get_or_create_collection(name='openai_collection_raw_big', embedding_function=openai_embedding_function)
-openai_collection_clean_big = chroma_client.get_or_create_collection(name='openai_collection_clean_big', embedding_function=openai_embedding_function)
-
-
-# openai_collection_raw_small = chroma_client.get_or_create_collection(name='openai_collection_raw_small', embedding_function=openai_embedding_function)
-# openai_collection_clean_small = chroma_client.get_or_create_collection(name='openai_collection_clean_small', embedding_function=openai_embedding_function)
+gigachat_embedding_function = GigaChatEmbeddingFunction(credentials=giga_chat_api_config.TOKEN, scope=giga_chat_api_config.SCOPE)
+chroma_client.delete_collection(name='gigachat_rospatent_titles_collection')
+gigachat_rospatent_titles_collection = chroma_client.get_or_create_collection(name='gigachat_rospatent_titles_collection', embedding_function=gigachat_embedding_function)
 
 
 async def domain_save_embeddings(
     request: List[EmbeddingRequest],
 ):
-    # if big:
-    collection_raw = openai_collection_raw_big
-    collection_clean = openai_collection_clean_big
-    # else:
-    #     collection_raw = openai_collection_raw_small
-    #     collection_clean = openai_collection_clean_small
+    collection_clean = gigachat_rospatent_titles_collection
     for item in tqdm(request):
         print(f"Processing item {item.id}")
         full_text_clean = clean(
@@ -65,27 +66,14 @@ async def domain_save_embeddings(
         )
         full_text_clean = "".join([c for c in full_text_clean if c.isalpha() or c.isspace()])
 
-        raw_splits = text_splitter.split_text(item.text)
         clean_splits = text_splitter.split_text(full_text_clean)
 
-        dataset = item.id.split('/')[0]
-        filename = item.id.split('/')[-1]
-
-        document_id = item.id.split('/')[-1].replace('.txt', '')
-
         try:
-            for idx, raw_chunk in enumerate(raw_splits):
-                collection_raw.add(
-                    ids=[f"{item.id.replace('.txt', '_' + str(idx) + '.txt')}"],
-                    documents=[raw_chunk],
-                    metadatas=[{"class": item.source, "part_index": idx, "dataset": dataset, "filename": filename, "document_id": document_id}],
-                )
-
             for idx, cleaned_chunk in enumerate(clean_splits):
                 collection_clean.add(
                     ids=[f"{item.id.replace('.txt', '_' + str(idx) + '.txt')}"],
                     documents=[cleaned_chunk],
-                    metadatas=[{"class": item.source, "part_index": idx, "dataset": dataset, "filename": filename, "document_id": document_id}],
+                    metadatas=[{"part_index": idx, 'id': item.id}],
                 )
         except Exception as e:
             print(f"Error processing item {item.id}: {e}")

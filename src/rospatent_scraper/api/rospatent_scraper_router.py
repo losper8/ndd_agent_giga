@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
 import aioredis
 from aiohttp import ClientSession
@@ -8,13 +8,14 @@ from asyncpg import Connection
 from fastapi import APIRouter, Depends
 
 from common.api.dependencies import get_client_session, get_db_connection
-from common.db.model import insert_patent_family_similarity, insert_patent_prototype_docs, insert_patent_referred_from
-from common.domain.schema import AdditionalPatentIds, Patent, PatentSimilarFamilySimple, SearchPatentResponse
+from common.db.model import insert_patent_family_similarity
+from common.domain.schema import Patent, PatentSimilarFamilySimple, SearchPatentResponse
 from common.utils.debug import async_timer
 from redis.config import redis_config
 from redis.redis import get_redis
 from rospatent_scraper.domain.additional_info import parse_additional_info
-from rospatent_scraper.domain.db import get_earliest_publication_date, get_existing_patents, get_patents_additional_info, get_title_ru, insert_many_patents, insert_many_patents_with_id_only, save_patent_similarity, save_patents
+from rospatent_scraper.domain.all_possible_info import get_all_possible_info
+from rospatent_scraper.domain.db import get_earliest_publication_date, get_existing_patents, get_title_ru, save_patent_similarity, save_patents
 from rospatent_scraper.domain.family_similar import patent_similar_family_simply
 from rospatent_scraper.domain.full_info import parse_full_info
 from rospatent_scraper.domain.schema import ClusterRequest, MapRequest, SearchOneRequest, SearchPatentsRequest, SearchSimilarByIdRequest
@@ -110,68 +111,68 @@ async def get_all_possible_patent_info(
         if cached_value:
             return SearchPatentResponse.model_validate_json(cached_value.decode())
 
-    print('/search_full_info/')
-    print(query)
-    search_patents_response, search_patents_xlsx_response = await asyncio.gather(
-        search_patents(query, session),
-        search_patents_xlsx(query, session),
-    )
-    # search_patents_response = await search_patents(query, session)
-    for search_patent, search_patent_xlsx in zip(search_patents_response.patents, search_patents_xlsx_response.patents):
-        search_patent.abstract_ru = search_patent_xlsx.abstract_ru or search_patent.abstract_ru
-
-    await save_patents(db, search_patents_response.patents)
-
-    all_patent_ids = [patent.id for patent in search_patents_response.patents]
-    patents_db_additional_info = await get_patents_additional_info(db, all_patent_ids)
-    db_id_to_patent = {patent.id: patent for patent in patents_db_additional_info}
-    missing_additional_info_patent_ids = [patent.id for patent in patents_db_additional_info if not any([patent.claims_ru, patent.claims_en, patent.description_ru, patent.description_en])]
-    # missing_additional_info_patent_ids = all_patent_ids
-
-    additional_empty_patents: List[Patent] = []
-
-    patent_parsed_additional_info, patents_family_similarity = await asyncio.gather(
-        asyncio.gather(*[parse_additional_info(id_, session) for id_ in missing_additional_info_patent_ids]),
-        asyncio.gather(*[patent_similar_family_simply(id_, session) for id_ in missing_additional_info_patent_ids]),
-    )
-    patents_family_similarity_flattened = [patent for patents in patents_family_similarity for patent in patents]
-    additional_empty_patents.extend([Patent(id=patent.referred_id) for patent in patents_family_similarity_flattened])
-
-    parsed_id_to_patent = {patent.id: patent for patent in patent_parsed_additional_info}
-
-    referred_from_items: List[AdditionalPatentIds] = []
-    prototype_docs_items: List[AdditionalPatentIds] = []
-
-    for patent in search_patents_response.patents:
-        if patent.id in parsed_id_to_patent:
-            compared_patent = parsed_id_to_patent[patent.id]
-        else:
-            compared_patent = db_id_to_patent[patent.id]
-
-        patent.abstract_ru = compared_patent.abstract_ru or patent.abstract_ru
-        patent.abstract_en = compared_patent.abstract_en or patent.abstract_en
-        patent.claims_ru = compared_patent.claims_ru or patent.claims_ru
-        patent.claims_en = compared_patent.claims_en or patent.claims_en
-        patent.description_ru = compared_patent.description_ru or patent.description_ru
-        patent.description_en = compared_patent.description_en or patent.description_en
-        patent.referred_from_ids = compared_patent.referred_from_ids or patent.referred_from_ids
-        patent.prototype_docs_ids = compared_patent.prototype_docs_ids or patent.prototype_docs_ids
-
-        if patent.referred_from_ids:
-            referred_from_items.extend([AdditionalPatentIds(source_id=patent.id, referred_id=ref_id) for ref_id in patent.referred_from_ids])
-            additional_empty_patents.extend([Patent(id=ref_id) for ref_id in patent.referred_from_ids])
-        if patent.prototype_docs_ids:
-            prototype_docs_items.extend([AdditionalPatentIds(source_id=patent.id, referred_id=proto_id) for proto_id in patent.prototype_docs_ids])
-            additional_empty_patents.extend([Patent(id=proto_id) for proto_id in patent.prototype_docs_ids])
-
-    await insert_many_patents_with_id_only(db, additional_empty_patents)
-    await insert_many_patents(db, search_patents_response.patents)
-    await insert_patent_referred_from(db, referred_from_items)
-    await insert_patent_prototype_docs(db, prototype_docs_items)
-    await insert_patent_family_similarity(db, patents_family_similarity_flattened)
+    search_patents_response = await get_all_possible_info(db, query, session)
+    # for patent in search_patents_response.patents:
+    #     print(patent.title_ru)
 
     if redis_config.ENABLED:
         await redis.set(cached_key, search_patents_response.json(), expire=redis_config.EXPIRE)
+    return search_patents_response
+
+
+EMBEDDINGS_API_URL = "http://embeddings:8084"
+GIGA_CHAT_API_URL = "http://giga-chat:8082"
+
+
+@rospatent_scraper_router.get(
+    "/search_full_info_extended/",
+    response_model_exclude_none=True,
+)
+@async_timer
+async def get_all_possible_patent_info_extended(
+    query: SearchPatentsRequest = Depends(),
+    session: ClientSession = Depends(get_client_session),
+    db: Connection = Depends(get_db_connection),
+    # redis: aioredis.Redis = Depends(get_redis)
+) -> SearchPatentResponse:
+    async with session.get(
+        f"{GIGA_CHAT_API_URL}/giga_chat/extent?text={query.patent_description}",
+    ) as response:
+        response_json = await response.json()
+        print(response_json)
+
+    # query.patent_description = response_json
+    search_patents_response = await get_all_possible_info(db, query, session)
+    embeddings_request: List[Dict[str, str]] = [
+        {
+            "id": patent.id,
+            "text": patent.title_ru,
+        }
+        for patent in search_patents_response.patents
+    ]
+    unsorted_patent_ids = [patent.id for patent in search_patents_response.patents]
+    id_to_patent = {patent.id: patent for patent in search_patents_response.patents}
+    async with session.post(
+        f"{EMBEDDINGS_API_URL}/api/v1/gigachat/embeddings",
+        json=embeddings_request,
+    ) as response:
+        embeddings_response = await response.json()
+        print(embeddings_response)
+
+    async with session.post(
+        f"{EMBEDDINGS_API_URL}/api/v1/gigachat/search?n_results=10&include_embeddings=false&id={'&id='.join(unsorted_patent_ids)}",
+        json={
+            "text": query.patent_description,
+        },
+    ) as response:
+        search_response = await response.json()
+        # print(search_response)
+        sorted_patent_ids = search_response["ids"][0]
+        # print(sorted_patent_ids)
+    search_patents_response.patents = [id_to_patent[id_] for id_ in sorted_patent_ids]
+    # for patent in search_patents_response.patents:
+    #     print(patent.title_ru)
+
     return search_patents_response
 
 
@@ -319,6 +320,7 @@ async def get_similar_family_simple(
     results = await patent_similar_family_simply(id, session)
     await insert_patent_family_similarity(db, results)
     return results
+
 
 @rospatent_scraper_router.get(
     '/earliest_publication_date'
