@@ -28,7 +28,7 @@ text_splitter = TokenTextSplitter.from_tiktoken_encoder(
 )
 chroma_client = chromadb.HttpClient(host=chroma_db_config.HOST, port=chroma_db_config.PORT)
 gigachat_embedding_function = GigaChatEmbeddingFunction(credentials=giga_chat_api_config.TOKEN, scope=giga_chat_api_config.SCOPE)
-chroma_client.delete_collection(name='gigachat_rospatent_titles_collection')
+# chroma_client.delete_collection(name='gigachat_rospatent_titles_collection')
 gigachat_rospatent_titles_collection = chroma_client.get_or_create_collection(name='gigachat_rospatent_titles_collection', embedding_function=gigachat_embedding_function)
 
 
