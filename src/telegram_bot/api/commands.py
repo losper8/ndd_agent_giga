@@ -35,7 +35,7 @@ async def search(text, update: Update, context: CallbackContext, limit=10, offse
     await reply_to.reply_text(f"search query: {text}, page: {offset // limit + 1}")
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            f"{RASPATENT_SCRAPER_URL}/rospatent_scraper/search_full_info/?patent_description={text}&limit={limit}&offset={offset}"
+            f"{RASPATENT_SCRAPER_URL}/rospatent_scraper/search_full_info_extended/?patent_description={text}&limit={limit}&offset={offset}"
         ) as response:
             result_json = await response.json()
             search_patent_response = SearchPatentResponse.validate(result_json)
